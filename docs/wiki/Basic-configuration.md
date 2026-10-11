@@ -37,6 +37,7 @@ end)
 | workspace_gap | number | gap between visible workspaces in the overview, in pixels | `0` |
 | layout | string | overview layout: `vertical`, `horizontal`, or `auto`; auto uses horizontal on portrait monitors and vertical on landscape monitors | `vertical` |
 | cross_monitor_drag | bool | enable cross-monitor overview dragging and Hyprland move-drag adoption; does not affect `open all`, `toggle all`, or manually opened overviews | `false` |
+| auto_open_on_drag | bool | open overview when a native move drag begins, even with all overviews closed; requires `cross_monitor_drag` | `false` |
 | wallpaper | int | wallpaper mode: `0` global only, `1` per-workspace only, `2` both | `0` |
 | blur | bool | blur the main overview wallpaper without blurring workspace wallpapers | `false` |
 | input | structure | input configuration subcategory; accepts a structure containing the properties listed below | see below |

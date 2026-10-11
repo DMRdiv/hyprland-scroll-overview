@@ -66,4 +66,21 @@ Acts on the window under the mouse cursor.
 | `select` | focus/select the window under the mouse cursor |
 | `close` | close the window under the mouse cursor |
 
+### Local navigation additions
+
+`hl.plugin.scrolloverview.workspace("up" or "down")` moves strictly between
+workspace cards, even when the selected column contains stacked windows.
+
+`hl.plugin.scrolloverview.drag("start")` attempts to adopt an existing native
+move drag. It can be called immediately after `hl.dsp.window.drag()` in a mouse
+binding. It respects `cross_monitor_drag` and `auto_open_on_drag`; resize drags
+are ignored. Motion handling also retries adoption after a drag threshold.
+
+`hl.plugin.scrolloverview.drag_status()` returns diagnostic fields including
+`motion_hook_active`, `unloading`, `last_result`, `open_overviews`,
+`motion_events`, and `post_motion_events`.
+
+As with other dispatcher factories, use `hl.dispatch(...)` to execute actions
+from arbitrary Lua code outside a keybind callback.
+
 [Back to Configuration](Configuration.md)

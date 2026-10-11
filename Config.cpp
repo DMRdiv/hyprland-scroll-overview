@@ -78,6 +78,21 @@ SDispatcher* findDispatcher(const std::string_view name) {
             .invalidArgError = "expected one of: select, close",
             .luaFunction     = [](lua_State* L) { return dispatcherFactoryLua(L, "window"); },
         },
+        {
+            .name            = "workspace",
+            .argPattern      = std::regex{"^(up|down)$"},
+            .typeArgError    = "expected a string argument",
+            .invalidArgError = "expected up or down",
+            .luaFunction     = [](lua_State* L) { return dispatcherFactoryLua(L, "workspace"); },
+        },
+        {
+            .name            = "drag",
+            .argPattern      = std::regex{"^start$"},
+            .defaultArg      = "start",
+            .typeArgError    = "expected an optional string argument",
+            .invalidArgError = "expected start",
+            .luaFunction     = [](lua_State* L) { return dispatcherFactoryLua(L, "drag"); },
+        },
     };
 
     const auto MATCH = std::ranges::find_if(registrations, [name](const auto& registration) { return registration.name == name; });
@@ -407,6 +422,7 @@ static void defineConfigValues() {
     addValue(makeShared<CIntValue>("plugin:scrolloverview:workspace_gap", "gap between overview workspaces", 0, SIntValueOptions{.min = 0}));
     addValue(makeShared<CStringValue>("plugin:scrolloverview:layout", "overview layout", Hyprlang::STRING{"vertical"}));
     addValue(makeShared<CBoolValue>("plugin:scrolloverview:cross_monitor_drag", "enable cross-monitor window dragging", false));
+    addValue(makeShared<CBoolValue>("plugin:scrolloverview:auto_open_on_drag", "open overview when a native move drag starts", false));
     addValue(makeShared<CIntValue>("plugin:scrolloverview:input:scroll_event_delay", "minimum delay (ms) between discrete scroll steps (wheel workspace nav and trackpad focus stepping)", 200, SIntValueOptions{.min = 0}));
     addValue(makeShared<CFloatValue>("plugin:scrolloverview:input:touchpad_scroll_factor", "overview touchpad scroll factor", 1.F,
                                      SFloatValueOptions{.min = 0.F}));

@@ -57,6 +57,7 @@ class CScrollOverview : public IOverview {
 
     void         fullRender() override;
     bool         adoptNativeWindowDrag(PHLWINDOW expectedWindow = {});
+    void         moveWorkspaceSelection(bool next);
 
   private:
     enum class ECloseMode {

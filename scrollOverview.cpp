@@ -3448,6 +3448,11 @@ void CScrollOverview::endWindowResize() {
     damage();
 }
 
+void CScrollOverview::moveWorkspaceSelection(bool next) {
+    moveViewportWorkspace(next);
+    syncSelectionToViewport();
+}
+
 void CScrollOverview::moveViewportWorkspace(bool up) {
     if (images.empty())
         return;

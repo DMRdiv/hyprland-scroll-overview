@@ -1,6 +1,7 @@
 #define WLR_USE_UNSTABLE
 
 #include <unistd.h>
+#include <lua.hpp>
 
 #include <hyprland/src/Compositor.hpp>
 #include <hyprland/src/desktop/state/FocusState.hpp>
@@ -65,6 +66,9 @@ static bool                g_scrollMoveMouseHookUnavailable = false;
 static bool                g_scrollMoveMouseHookWarned      = false;
 static CHyprSignalListener g_configReloadHook;
 static CHyprSignalListener g_nativeDragMouseMoveHook;
+static std::string g_lastNativeDragStatus = "idle";
+static uint64_t g_nativeDragMotionCount = 0;
+static uint64_t g_nativeDragPostMotionCount = 0;
 
 static void failNotif(const std::string& reason);
 static void warnNativeDragUnavailable();
@@ -122,10 +126,12 @@ void disableScrollOverviewHooks() {
         g_pScrollRenderWorkspaceHook->unhook();
 
     g_scrollOverviewHooksActive = false;
+    reconcileNativeDragHook();
 }
 
 static void hkMoveMouse(void* thisptr, const Vector2D& mousePos) {
     rc<origMoveMouse>(g_pScrollMoveMouseHook->m_original)(thisptr, mousePos);
+    ++g_nativeDragPostMotionCount;
 
     // Catch a drag that crossed the threshold during this native motion. The
     // early mouse listener handles drags whose threshold was already reached.
@@ -275,19 +281,29 @@ static SP<IOverview> dispatcherOverview() {
 }
 
 bool adoptNativeWindowDragIntoOverview() {
-    if (scrollOverviews().empty() || !g_layoutManager || !g_pInputManager)
+    if (!g_layoutManager || !g_pInputManager)
         return false;
 
     const auto& DRAGCONTROLLER = g_layoutManager->dragController();
     const auto  TARGET         = DRAGCONTROLLER ? DRAGCONTROLLER->target() : nullptr;
     const auto  WINDOW         = TARGET ? TARGET->window() : PHLWINDOW{};
+    if (TARGET)
+        g_lastNativeDragStatus = std::format("observed mode {}, threshold {}", sc<int>(DRAGCONTROLLER->mode()), DRAGCONTROLLER->dragThresholdReached());
     if (!WINDOW || DRAGCONTROLLER->mode() != MBIND_MOVE || !DRAGCONTROLLER->dragThresholdReached())
         return false;
 
+    g_lastNativeDragStatus = "move drag detected";
     const auto SOURCEWORKSPACE = TARGET->workspace();
     const auto SOURCEMONITOR   = SOURCEWORKSPACE ? SOURCEWORKSPACE->m_monitor.lock() : WINDOW->m_monitor.lock();
-    if (!SOURCEMONITOR || !SOURCEMONITOR->m_enabled || !ScrollOverview::Config::getCrossMonitorDrag(SOURCEMONITOR))
+    if (!SOURCEMONITOR || !SOURCEMONITOR->m_enabled || !ScrollOverview::Config::getCrossMonitorDrag(SOURCEMONITOR)) {
+        g_lastNativeDragStatus = "source monitor disabled or cross-monitor drag disabled";
         return false;
+    }
+
+    if (scrollOverviews().empty() && !ScrollOverview::Config::getValue<bool>("plugin:scrolloverview:auto_open_on_drag", SOURCEMONITOR)) {
+        g_lastNativeDragStatus = "automatic opening disabled";
+        return false;
+    }
 
     auto        result   = openOverview(SOURCEMONITOR);
     if (result.overview && result.overview->isClosing())
@@ -295,6 +311,7 @@ bool adoptNativeWindowDragIntoOverview() {
 
     auto* const overview = result.overview ? dynamic_cast<CScrollOverview*>(result.overview.get()) : nullptr;
     if (!overview || !overview->adoptNativeWindowDrag(WINDOW)) {
+        g_lastNativeDragStatus = overview ? "native adoption failed" : "overview creation failed";
         if (result.created && result.overview)
             result.overview->dismissTransient();
         return false;
@@ -302,6 +319,7 @@ bool adoptNativeWindowDragIntoOverview() {
 
     result.overview->requestInputFrame();
     result.overview->damage();
+    g_lastNativeDragStatus = "adopted";
     return true;
 }
 
@@ -399,6 +417,22 @@ static SDispatchResult onNavigateDispatcher(std::string arg) {
     return {};
 }
 
+static SDispatchResult onDragDispatcher(std::string arg) {
+    if (arg != "start")
+        return {.success = false, .error = "expected start"};
+    adoptNativeWindowDragIntoOverview();
+    return {};
+}
+
+static SDispatchResult onWorkspaceDispatcher(std::string arg) {
+    const auto OVERVIEW = dispatcherOverview();
+    if (arg != "up" && arg != "down")
+        return {.success = false, .error = "expected up or down"};
+    if (auto* overview = OVERVIEW ? dynamic_cast<CScrollOverview*>(OVERVIEW.get()) : nullptr)
+        overview->moveWorkspaceSelection(arg == "down");
+    return {};
+}
+
 static SDispatchResult onWindowDispatcher(std::string arg) {
     const auto OVERVIEW = scrollOverviewAt(g_pInputManager->getMouseCoordsInternal());
     if (!OVERVIEW)
@@ -451,7 +485,12 @@ static void* findOptionalFn(const std::string& name, const std::string_view dema
 }
 
 static void reconcileNativeDragHook() {
-    const bool REQUESTED = !g_unloading && g_scrollOverviewHooksActive && !scrollOverviews().empty() && ScrollOverview::Config::hasCrossMonitorDragEnabled();
+    const bool AUTOOPEN = std::ranges::any_of(State::monitorState()->monitors(), [](const auto& monitor) {
+        return monitor && ScrollOverview::Config::getCrossMonitorDrag(monitor) &&
+            ScrollOverview::Config::getValue<bool>("plugin:scrolloverview:auto_open_on_drag", monitor);
+    });
+    const bool REQUESTED = !g_unloading && ScrollOverview::Config::hasCrossMonitorDragEnabled() &&
+        ((g_scrollOverviewHooksActive && !scrollOverviews().empty()) || AUTOOPEN);
 
     if (!REQUESTED) {
         disableNativeDragHook();
@@ -463,7 +502,11 @@ static void reconcileNativeDragHook() {
 
     try {
         if (!g_pScrollMoveMouseHook && !g_scrollMoveMouseHookUnavailable) {
-            const auto ADDRESS = findOptionalFn("moveMouse", "CLayoutManager::moveMouse(");
+            // Hook the drag controller itself: native motion may bypass a layout
+            // manager wrapper in optimized compositor builds.
+            auto ADDRESS = findOptionalFn("mouseMove", "CDragStateController::mouseMove(");
+            if (!ADDRESS)
+                ADDRESS = findOptionalFn("moveMouse", "CLayoutManager::moveMouse(");
             if (ADDRESS)
                 g_pScrollMoveMouseHook = HyprlandAPI::createFunctionHook(SCROLLOVERVIEW_HANDLE, ADDRESS, rc<void*>(hkMoveMouse));
 
@@ -625,6 +668,7 @@ static Hyprlang::CParseResult overviewGestureKeyword(const char* LHS, const char
 
 APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     SCROLLOVERVIEW_HANDLE = handle;
+    g_unloading = false;
 
     const std::string HASH        = __hyprland_api_get_hash();
     const std::string CLIENT_HASH = __hyprland_api_get_client_hash();
@@ -688,7 +732,8 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     g_configReloadHook = Event::bus()->m_events.config.reloaded.listen([] { reconcileNativeDragHook(); });
 
     g_nativeDragMouseMoveHook = Event::bus()->m_events.input.mouse.move.listen([](Vector2D, Event::SCallbackInfo& info) {
-        if (info.cancelled || g_unloading || scrollOverviews().empty())
+        ++g_nativeDragMotionCount;
+        if (g_unloading)
             return;
 
         try {
@@ -702,8 +747,26 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     ScrollOverview::Config::registerDispatcher("overview", ::onOverviewDispatcher);
     ScrollOverview::Config::registerDispatcher("navigate", ::onNavigateDispatcher);
     ScrollOverview::Config::registerDispatcher("window", ::onWindowDispatcher);
+    ScrollOverview::Config::registerDispatcher("workspace", ::onWorkspaceDispatcher);
+    ScrollOverview::Config::registerDispatcher("drag", ::onDragDispatcher);
     ScrollOverview::Config::registerGesture(::onRegisterOverviewGesture, ::overviewGestureKeyword);
     ScrollOverview::Config::registerConfig();
+    HyprlandAPI::addLuaFunction(SCROLLOVERVIEW_HANDLE, "scrolloverview", "drag_status", [](lua_State* L) {
+        lua_newtable(L);
+        lua_pushboolean(L, g_scrollMoveMouseHookActive);
+        lua_setfield(L, -2, "motion_hook_active");
+        lua_pushboolean(L, g_unloading);
+        lua_setfield(L, -2, "unloading");
+        lua_pushstring(L, g_lastNativeDragStatus.c_str());
+        lua_setfield(L, -2, "last_result");
+        lua_pushinteger(L, scrollOverviews().size());
+        lua_setfield(L, -2, "open_overviews");
+        lua_pushinteger(L, g_nativeDragMotionCount);
+        lua_setfield(L, -2, "motion_events");
+        lua_pushinteger(L, g_nativeDragPostMotionCount);
+        lua_setfield(L, -2, "post_motion_events");
+        return 1;
+    });
 
     return {"scrolloverview", "A plugin for an overview", "Vaxry, yayuuu", SCROLLOVERVIEW_VERSION};
 }
