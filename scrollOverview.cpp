@@ -1669,7 +1669,7 @@ CScrollOverview::CScrollOverview(PHLWORKSPACE startedOn_, bool swipe_, PHLMONITO
     windowMoveHook      = Event::bus()->m_events.window.moveToWorkspace.listen(onWindowMove);
     windowActiveHook    = Event::bus()->m_events.window.active.listen(onWindowActive);
     windowFullscreenHook = Event::bus()->m_events.window.fullscreen.listen(onWindowFullscreen);
-    workspaceCreatedHook = Event::bus()->m_events.workspace.created.listen(onWorkspaceLifecycle);
+    workspaceCreatedHook = Event::bus()->m_events.workspace.createdLate.listen(onWorkspaceLifecycle);
     workspaceRemovedHook = Event::bus()->m_events.workspace.removed.listen(onWorkspaceLifecycle);
     activateSubmapIfConfigured();
     if (!usesSubmapKeybinds)
@@ -1803,7 +1803,7 @@ void CScrollOverview::updateBackdropBlurCache(PHLMONITOR monitor, int wallpaperM
         auto bindBackdrop = g_pHyprRenderer->bindTempFB(g_pHyprRenderer->context(), backdropBlurFB);
         g_pHyprRenderer->draw(g_pHyprRenderer->context(), CClearPassElement::SClearData{CHyprColor{0.F, 0.F, 0.F, 0.F}}, fullDamage);
 
-        g_pHyprRenderer->draw(g_pHyprRenderer->context(), 
+        g_pHyprRenderer->draw(g_pHyprRenderer->context(),
             CTexPassElement::SRenderData{
                 .tex    = BLURREDTEX,
                 .box    = CBox{0, 0, RENDERSIZE.x, RENDERSIZE.y},
@@ -1822,7 +1822,7 @@ void CScrollOverview::renderBackdropBlurCache(PHLMONITOR monitor) {
     const auto TEX = backdropBlurFB->getTexture();
     const CRegion fullDamage{CBox{0, 0, monitor->m_transformedSize.x, monitor->m_transformedSize.y}};
 
-    g_pHyprRenderer->draw(g_pHyprRenderer->context(), 
+    g_pHyprRenderer->draw(g_pHyprRenderer->context(),
         CTexPassElement::SRenderData{
             .tex    = TEX,
             .box    = CBox{0, 0, monitor->m_transformedSize.x, monitor->m_transformedSize.y},
@@ -5550,10 +5550,7 @@ bool CScrollOverview::dispatchSubmapMouseClick(uint32_t button) {
     if (KEYBIND == BINDS.end())
         return false;
 
-    const auto INDEX = Hyprutils::String::strToNumber<int>((*KEYBIND)->metadata().argument);
-    const auto MGR   = Config::Lua::mgr();
-    if (!INDEX || !MGR)
-        return false;
+    const auto BIND = *KEYBIND;
 
     auto&      actionState          = *Config::Actions::state();
     const int PREVIOUSPASSPRESSED   = actionState.m_passPressed;
@@ -5571,7 +5568,7 @@ bool CScrollOverview::dispatchSubmapMouseClick(uint32_t button) {
         actionState.m_lastMouseCode       = PREVIOUSMOUSECODE;
     });
 
-    const auto RESULT = MGR->callLuaFnBind(*INDEX);
+    const auto RESULT = BIND->invoke();
     return RESULT.success;
 }
 
