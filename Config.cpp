@@ -564,7 +564,8 @@ int getShadowRenderPower(PHLMONITOR monitor) {
 std::optional<::Config::CGradientValueData> getShadowColor(PHLMONITOR monitor) {
     constexpr auto NAME = "plugin:scrolloverview:shadow:color";
 
-    if (!monitorValueData(NAME, monitor) && !::Config::mgr()->getConfigValue(NAME).setByUser)
+    const auto SETBYUSER = ::Config::mgr()->getConfigValue(NAME).setByUser;
+    if (!monitorValueData(NAME, monitor) && !(SETBYUSER && *SETBYUSER))
         return std::nullopt;
 
     return getValue<::Config::CGradientValueData>(NAME, monitor);
